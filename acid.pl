@@ -16,7 +16,6 @@ my $sock = IO::Socket::INET->new(LocalAddr => '192.168.0.253',
                                  Listen => 12) or die $!;
 
 my $req = "";
-my $get = "";
 my $host = "";
 my $path = "";
 
@@ -53,6 +52,8 @@ for (;;) {
 		$host = $1.$path;
 		$redir = $redir_base;
 		$redir =~ s/NOACID/$host/;
+	} else {
+		next;
 	}
 
 	print $peer $redir;
