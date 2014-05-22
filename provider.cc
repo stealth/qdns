@@ -145,16 +145,18 @@ string socket_provider::sender()
 
 int usipp_provider::init(const map<string, string> &args)
 {
-	string dev = "eth0", f = "udp and dst port 53";
+	string dev = "eth0", f = "ip and udp and dst port 53 ";
 
 	auto it = args.find("mon");
 	if (it != args.end())
 		dev = it->second;
 
-	if ((it = args.find("filter")) != args.end()) {
-		f = it->second;
-		f += " and udp and dst port 53";
-	}
+	if (args.count("6") > 0)
+		f = "ip6 and udp and dst port 53 ";
+
+	if ((it = args.find("filter")) != args.end())
+		f += it->second;
+
 	if (args.count("6") > 0) {
 		mon6 = new (nothrow) UDP6("::");
 		family = AF_INET6;
