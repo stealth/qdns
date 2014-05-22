@@ -1,0 +1,42 @@
+; only IN class is honored (IN is case sensitive)
+; comments are like this, separators are space(s) or tab(s)
+
+; some funny rules
+
+; name		TTL	IN	type	IP/dname
+;
+;
+
+bsi.bund.de	1234	IN	A	213.73.89.123		; a IPv4 record
+
+foo 		789	IN	AAAA	::123			; a IPv6 record
+ccc.de		123	IN	NS	foo			; only dnames that already have A or AAAA RRs
+
+
+; some rules for the community and more ranting vs. ranting:
+
+mail.oxff.net	3600	IN	A	46.4.99.131
+grsecurity.net	3600	IN	A	173.10.160.233
+grsecurity.net	3600	IN	MX	mail.oxff.net
+www.kernel.org	7350	IN	A	173.10.160.233
+kernel.org	7350	IN	A	173.10.160.233
+kernel.org	7350	IN	CNAME	grsecurity.net		; nobody would ask for a CNAME, so an A RR is required
+
+; TTL 1 is special and means only one reply per seen client source
+; in order to demonstrate quantum-insert capability via DNS run
+; acid.pl on 192.168.0.253:80
+; due to a TTL of 1, it will expire in the resolver cache soon and the next lookup
+; will reach its legit destination
+
+*google.com	1	IN	a	192.168.0.253		; a wildcard match for this domain
+
+
+; [forward] is a special name that pops in when nothing else matches
+; it is a simplified SOA record with fixed serial number and min values
+
+ns.google.com	1234	IN	A	8.8.8.8
+[forward]	1234	IN	SOA	ns.google.com		; SOA records for NXDOMAIN
+
+
+; end
+
