@@ -1,6 +1,13 @@
 ; only IN class is honored (IN is case sensitive)
 ; comments are like this, separators are space(s) or tab(s)
 
+; there are two types of RR's. Normal (matching) ones that specify a RR
+; and link-RR starting with a '@' to indicate to which already existing
+; RR this record is linked to as an additional answer. Only normal RR's
+; are used for matching queries. link-RR's are _only_ used for chaining
+; into existing matching-RR's. The RR that follows next-line to an @ RR
+; is interpreated as the additional record.
+
 ; some funny rules
 
 ; name		TTL	IN	type	IP/dname
@@ -8,19 +15,34 @@
 ;
 
 bsi.bund.de	1234	IN	A	213.73.89.123		; a IPv4 record
+ccc.de		123	IN	NS	foo
 
+; to save client from additional lookup, provide an AAAA RR
+; along with the NS RR by linking the following AAAA RR to the matching NS RR
+; from above:
+@ccc.de	NS
 foo 		789	IN	AAAA	::123			; a IPv6 record
-ccc.de		123	IN	NS	foo			; only dnames that already have A or AAAA RRs
-
+@ccc.de NS
+bar		123	IN	A	1.2.3.4
 
 ; some rules for the community and more ranting vs. ranting:
 
 mail.oxff.net	3600	IN	A	46.4.99.131
 grsecurity.net	3600	IN	A	173.10.160.233
+
+
+; Above mail.oxff.net RR is also answered by queries for it. Now also link
+; it to grsecurity.net's MX:
 grsecurity.net	3600	IN	MX	mail.oxff.net
-www.kernel.org	7350	IN	A	173.10.160.233
+@grsecurity.net	MX
+mail.oxff.net   3600    IN      A       46.4.99.131
+
+
 kernel.org	7350	IN	A	173.10.160.233
+@kernel.org	A
 kernel.org	7350	IN	CNAME	grsecurity.net		; nobody would ask for a CNAME, so an A RR is required
+@kernel.org	A
+grsecurity.net	7350	IN	A	173.10.160.233
 
 ; TTL 1 is special and means only one reply per seen client source
 ; in order to demonstrate quantum-insert capability via DNS run
@@ -33,10 +55,11 @@ kernel.org	7350	IN	CNAME	grsecurity.net		; nobody would ask for a CNAME, so an A
 
 ; [forward] is a special name that pops in when nothing else matches
 ; it is a simplified SOA record with fixed serial number and min values
+; afer linking in a SOA, you must not link in more RR's
 
-ns.google.com	1234	IN	A	8.8.8.8
 [forward]	1234	IN	SOA	ns.google.com		; SOA records for NXDOMAIN
-
+@[forward]	SOA
+ns.google.com	1234	IN	A	8.8.8.8
 
 ; end
 

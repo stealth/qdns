@@ -183,7 +183,7 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	log += " -> ";
 
 	bool found_domain = 1;
-	match m;
+	match *m = NULL;
 	auto it1 = exact_matches.find(make_pair(qname, qtype));
 	if (it1 == exact_matches.end()) {
 		string::size_type pos = string::npos, minpos = string::npos;
@@ -224,7 +224,7 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 		m = it1->second;
 
 	// TTL of 1 means, only handle this client src once
-	if (m.ttl == htonl(1)) {
+	if (m->ttl == htonl(1)) {
 		if (once.count(src) > 0) {
 			log += "(once, nosend)";
 			return -1;
@@ -232,7 +232,7 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 		once[src] = 1;
 	}
 
-	log += m.field;
+	log += m->field;
 
 	// reply-hdr
 	dnshdr rhdr;
@@ -247,31 +247,37 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	else
 		rhdr.rcode = 0;
 	rhdr.q_count = hdr.q_count;
-	rhdr.a_count = m.a_count;
-	rhdr.rra_count = m.rra_count;
-	rhdr.ad_count = m.ad_count;
+	rhdr.a_count = m->a_count;
+	rhdr.rra_count = m->rra_count;
+	rhdr.ad_count = m->ad_count;
 
 	response = string((char *)&rhdr, sizeof(rhdr));
 	response += question;
-	response += m.rr;
+	response += m->rr;
 
 	return 1;
 }
 
 
 
+// beware: this function can overflow stack, if you place too many
+// CNAMEs into the zone file.
 int qdns::parse_zone(const string &file)
 {
 	FILE *f = fopen(file.c_str(), "r");
 	if (!f)
 		return build_error("parse_zone: fopen");
 
-	char buf[1024], *ptr = NULL, name[256], type[256], ttlb[255], field[256], rr[1024], *rr_ptr = NULL;
-	uint16_t off = 0, rlen = 0, zero = 0;
+	char buf[1024], *ptr = NULL, name[256], type[256], ltype[256], ttlb[255], field[256], rr[1024], *rr_ptr = NULL;
+	uint16_t off = 0, rlen = 0, zero = 0, dtype = 0, dltype = 0, dclass = htons(1);
 	uint32_t ttl = 0, records = 0;
 	uint32_t soa_ints[5] = {0x11223344, htonl(7200), htonl(7200), htonl(3600000), htonl(7200)};
-	string dname = "";
+	string dname = "", link_rr = "", dlname = "";
 	map<string, string> A, AAAA;
+	enum {
+		RR_KIND_MATCHING	= 0,
+		RR_KIND_LINKING		= 1
+	} rr_kind = RR_KIND_MATCHING;
 
 	// a compressed label, pointing right to original QNAME, so
 	// that even on wildcard matches, we already have a full blown
@@ -280,14 +286,22 @@ int qdns::parse_zone(const string &file)
 
 	memset(buf, 0, sizeof(buf));
 	memset(name, 0, sizeof(name));
+	memset(ltype, 0, sizeof(ltype));
 	memset(type, 0, sizeof(type));
-	memset(ttlb, 0, sizeof(ttl));
+	memset(ttlb, 0, sizeof(ttlb));
 	memset(field, 0, sizeof(field));
 
 	while (fgets(buf, sizeof(buf), f)) {
+
+		if (rr_kind == RR_KIND_MATCHING) {
+			link_rr = "";
+			dltype = 0;
+		}
+
 		memset(rr, 0, sizeof(rr));
 		rr_ptr = rr;
 		dname = "";
+		dlname = "";
 
 		ptr = buf;
 		while (*ptr == ' ' || *ptr == '\t')
@@ -295,96 +309,166 @@ int qdns::parse_zone(const string &file)
 		if (*ptr == ';' || *ptr == '\n')
 			continue;
 
+		// link following entry to already existing RR?
+		if (*ptr == '@') {
+			// wrong format? ignore!
+			if (sscanf(ptr + 1, "%255[^ \t]%*[ \t]%255[^ \t;\n]", name, ltype) != 2)
+				link_rr = "";
+			else {
+				link_rr = name;
+				rr_kind = RR_KIND_LINKING;
+			}
+			continue;
+		}
+
 		if (sscanf(ptr, "%255[^ \t]%*[ \t]%255[^ \t]%*[ \t]IN%*[ \t]%255[^ \t]%*[ \t]%255[^ \t;\n]", name, ttlb, type, field) != 4)
 			continue;
 
+		// the next loop cycle we assume matching RR's until we find @ again.
+		// this is to reset link_rr on loop start
+		rr_kind = RR_KIND_MATCHING;
+
 		//cout<<"Parsed: "<<name<<"<->"<<type<<"<->"<<ttlb<<"<->"<<field<<endl;
-
-		match m;
-
-		// keep a human readable copy of answer for later logging
-		m.field = field;
-
-		if (name[0] == '*') {
-			off = 1;
-			if (name[1] == '.')
-				off = 2;
-			memmove(name, name + off, sizeof(name) - off);
-			m.mtype = QDNS_MATCH_WILD;
-		} else
-			m.mtype = QDNS_MATCH_EXACT;
 
 		if (host2qname(name, dname) <= 0)
 			continue;
 		if (dname.size() > 255)
 			continue;
 
-		// start constructing answer section RR's. See above comment
-		// for compressed label ptr
-		memcpy(rr_ptr, &clbl, sizeof(clbl));
-		rr_ptr += sizeof(clbl);
-
-		m.fqdn = name;
-
-		// DNS encoded name
-		m.name = dname;
-
-		// only supported class: IN
-		m._class = htons(1);
-
-		// TTL
-		ttl = htonl(strtoul(ttlb, NULL, 10));
-		m.ttl = ttl;
-
+		// DNS type of current entry
 		if (strcasecmp(type, "A") == 0) {
+			dtype = htons(dns_type::A);
+		} else if (strcasecmp(type, "MX") == 0) {
+			dtype = htons(dns_type::MX);
+		} else if (strcasecmp(type, "AAAA") == 0) {
+			dtype = htons(dns_type::AAAA);
+		} else if (strcasecmp(type, "NS") == 0) {
+			dtype = htons(dns_type::NS);
+		} else if (strcasecmp(type, "CNAME") == 0) {
+			dtype = htons(dns_type::CNAME);
+		} else if (strcasecmp(type, "SOA") == 0) {
+			dtype = htons(dns_type::SOA);
+		} else
+			continue;
 
-			m.type = htons(dns_type::A);
+		ttl = htonl(strtoul(ttlb, NULL, 10));
+
+		match *m = NULL;
+
+		// use already existing match if linked to existing RR
+		if (link_rr.size() > 0) {
+			if (host2qname(link_rr, dlname) <= 0)
+				continue;
+
+			// DNS type of RR which we link to
+			if (strcasecmp(ltype, "A") == 0) {
+				dltype = htons(dns_type::A);
+			} else if (strcasecmp(ltype, "MX") == 0) {
+				dltype = htons(dns_type::MX);
+			} else if (strcasecmp(ltype, "AAAA") == 0) {
+				dltype = htons(dns_type::AAAA);
+			} else if (strcasecmp(ltype, "NS") == 0) {
+				dltype = htons(dns_type::NS);
+			} else if (strcasecmp(ltype, "CNAME") == 0) {
+				dltype = htons(dns_type::CNAME);
+			} else if (strcasecmp(ltype, "SOA") == 0) {
+				dltype = htons(dns_type::SOA);
+			} else
+				continue;
+
+			if (exact_matches.count(make_pair(dlname, dltype)) > 0)
+				m = exact_matches.find(make_pair(dlname, dltype))->second;
+			else if (wild_matches.count(make_pair(dlname, dltype)) > 0)
+				m = wild_matches.find(make_pair(dlname, dltype))->second;
+			else
+				continue;
+
+			// Can't use compression here, since its maybe an unrelated name.
+			// Use (current) dname, not dlname.
+			memcpy(rr_ptr, dname.c_str(), dname.size());
+			rr_ptr += dname.size();
+		} else {
+			m = new match;
+
+			// keep a human readable copy of answer for later logging
+			m->field = field;
+
+			if (name[0] == '*') {
+				off = 1;
+				if (name[1] == '.')
+					off = 2;
+				memmove(name, name + off, sizeof(name) - off);
+				m->mtype = QDNS_MATCH_WILD;
+
+				// we changed 'name' array, so we need to encode again
+				if (host2qname(name, dname) <= 0)
+					continue;
+				if (dname.size() > 255)
+					continue;
+
+				// wildcard matches have wrong byte-count in front
+				dname.erase(0, 1);
+			} else
+				m->mtype = QDNS_MATCH_EXACT;
+
+			// start constructing answer section RR's. See above comment
+			// for compressed label ptr
+			memcpy(rr_ptr, &clbl, sizeof(clbl));
+			rr_ptr += sizeof(clbl);
+
+			m->fqdn = name;
+
+			// DNS encoded name
+			m->name = dname;
+
+			// TTL
+			m->ttl = ttl;
+
+			m->type = dtype;
+			m->a_count = 0;
+			m->ad_count = 0;
+			m->rra_count = 0;
+		}
+
+
+		switch (ntohs(dtype)) {
+		case dns_type::A:
 			in_addr in;
 			if (inet_pton(AF_INET, field, &in) != 1)
 				continue;
 			// construct RR as per RFC
 			rlen = htons(4);
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
 			rr_ptr += sizeof(rlen);
 			memcpy(rr_ptr, &in, sizeof(in));
 			rr_ptr += sizeof(in);
-			m.rr = string(rr, rr_ptr - rr);
 
-			m.a_count = htons(1);
-			m.ad_count = 0;
-			m.rra_count = 0;
+			// If we are linking against a SOA, reverse order since
+			// Authority comes after answer section. dltype is the dtype of
+			// the RR we are linking to (if any, otherwise its 0)
+			if (dltype == htons(dns_type::SOA))
+				m->rr = string(rr, rr_ptr - rr) + m->rr;
+			else
+				m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
 
-			// keep an idea which names we already have an RR for, but take
-			// the real dname in this RR, not the compressed label
-			A[m.fqdn] = dname + m.rr.substr(2);
-
-		} else if (strcasecmp(type, "MX") == 0) {
-			m.type = htons(dns_type::MX);
-			string ip_rr = "";
-
-			// check for already existing A/AAAA RR's, as we
-			// want to pass them along in answer
-			if (A.count(field) > 0)
-				ip_rr = A[field];
-			else if (AAAA.count(field) > 0)
-				ip_rr = AAAA[field];
-			if (ip_rr.size() == 0)
-				cerr<<"WARN: MX RR '"<<m.fqdn<<"' w/o A/AAAA RR for '"<<field<<"' defined until here.\n";
+		case dns_type::MX:
 			if (host2qname(field, dname) <= 0)
 				continue;
 			if (dname.size() > 256)
 				continue;
 			rlen = htons(dname.size() + sizeof(uint16_t));
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
@@ -393,121 +477,95 @@ int qdns::parse_zone(const string &file)
 			rr_ptr += sizeof(zero);
 			memcpy(rr_ptr, dname.c_str(), dname.size());
 			rr_ptr += dname.size();
-			m.rr = string(rr, rr_ptr - rr);
-			if (ip_rr.size() > 0) {
-				m.rr += ip_rr;
-				m.ad_count = htons(1);
-			} else
-				m.ad_count = 0;
-			m.a_count = htons(1);
-			m.rra_count = 0;
-		} else if (strcasecmp(type, "AAAA") == 0) {
-			m.type = htons(dns_type::AAAA);
+			if (dltype == htons(dns_type::SOA))
+				m->rr = string(rr, rr_ptr - rr) + m->rr;
+			else
+				m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
+
+		case dns_type::AAAA:
 			in6_addr in6;
 			if (inet_pton(AF_INET6, field, &in6) != 1)
 				continue;
 			rlen = htons(sizeof(in6));
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
 			rr_ptr += sizeof(rlen);
 			memcpy(rr_ptr, &in6, sizeof(in6));
 			rr_ptr += sizeof(in6);
-			m.rr = string(rr, rr_ptr - rr);
-			m.a_count = htons(1);
-			m.ad_count = 0;
-			m.rra_count = 0;
+			if (dltype == htons(dns_type::SOA))
+				m->rr = string(rr, rr_ptr - rr) + m->rr;
+			else
+				m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
 
-			AAAA[m.fqdn] = dname + m.rr.substr(2);
-		} else if (strcasecmp(type, "NS") == 0) {
-			m.type = htons(dns_type::NS);
-			string ip_rr = "";
-			if (A.count(field) > 0)
-				ip_rr = A[field];
-			else if (AAAA.count(field) > 0)
-				ip_rr = AAAA[field];
-			if (ip_rr.size() == 0)
-				cerr<<"WARN: NS RR '"<<m.fqdn<<"' w/o A/AAAA RR for '"<<field<<"' defined until here.\n";
-
+		case dns_type::NS:
 			if (host2qname(field, dname) <= 0)
 				continue;
 			if (dname.size() > 256)
 				continue;
 			rlen = htons(dname.size());
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
 			rr_ptr += sizeof(rlen);
 			memcpy(rr_ptr, dname.c_str(), dname.size());
 			rr_ptr += dname.size();
-			m.rr = string(rr, rr_ptr - rr);
-			if (ip_rr.size() > 0) {
-				m.rr += ip_rr;
-				m.ad_count = htons(1);
-			} else
-				m.ad_count = 0;
-			m.a_count = htons(1);
-			m.rra_count = 0;
-		} else if (strcasecmp(type, "CNAME") == 0) {
-			m.type = htons(dns_type::CNAME);
-			string ip_rr = "";
-			if (A.count(field) > 0)
-				ip_rr = A[field];
-			else if (AAAA.count(field) > 0)
-				ip_rr = AAAA[field];
-			if (ip_rr.size() == 0)
-				cerr<<"WARN: CNAME RR '"<<m.fqdn<<"' w/o A/AAAA RR for '"<<field<<"' defined until here.\n";
+			if (dltype == htons(dns_type::SOA))
+				m->rr = string(rr, rr_ptr - rr) + m->rr;
+			else
+				m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
 
+		case dns_type::CNAME:
+			m->type = dtype;
 			if (host2qname(field, dname) <= 0)
 				continue;
 			if (dname.size() > 256)
 				continue;
 			rlen = htons(dname.size());
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
 			rr_ptr += sizeof(rlen);
 			memcpy(rr_ptr, dname.c_str(), dname.size());
 			rr_ptr += dname.size();
-			m.rr = string(rr, rr_ptr - rr);
-			if (ip_rr.size() > 0) {
-				m.rr += ip_rr;
-				m.ad_count = htons(1);
-			} else
-				m.ad_count = 0;
+			if (dltype == htons(dns_type::SOA))
+				m->rr = string(rr, rr_ptr - rr) + m->rr;
+			else
+				m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
 
-			m.a_count = htons(1);
-			m.rra_count = 0;
-		} else if (strcasecmp(type, "SOA") == 0) {
-			m.type = htons(dns_type::SOA);
-			string ip_rr = "";
-			if (A.count(field) > 0)
-				ip_rr = A[field];
-			else if (AAAA.count(field) > 0)
-				ip_rr = AAAA[field];
-			if (ip_rr.size() == 0)
-				cerr<<"WARN: SOA RR '"<<m.fqdn<<"' w/o A/AAAA RR for '"<<field<<"' defined until here.\n";
+		// Once a SOA has been linked in, no other RR's must be linked,
+		// as they must appear between answer and additional section
+		case dns_type::SOA:
+			m->type = dtype;
 			if (host2qname(field, dname) <= 0)
 				continue;
 			if (dname.size() > 256)
 				continue;
 			rlen = htons(2*dname.size() + sizeof(soa_ints));
-			memcpy(rr_ptr, &m.type, sizeof(m.type));
-			rr_ptr += sizeof(m.type);
-			memcpy(rr_ptr, &m._class, sizeof(m._class));
-			rr_ptr += sizeof(m._class);
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
 			memcpy(rr_ptr, &ttl, sizeof(ttl));
 			rr_ptr += sizeof(ttl);
 			memcpy(rr_ptr, &rlen, sizeof(rlen));
@@ -518,21 +576,23 @@ int qdns::parse_zone(const string &file)
 			rr_ptr += dname.size();
 			memcpy(rr_ptr, soa_ints, sizeof(soa_ints));
 			rr_ptr += sizeof(soa_ints);
-			m.rr = string(rr, rr_ptr - rr);
-			if (ip_rr.size() > 0) {
-				m.rr += ip_rr;
-				m.ad_count = htons(1);
-			} else
-				m.ad_count = 0;
-			m.a_count = 0;
-			m.rra_count = htons(1);
-		} else
-			continue;
+			m->rr += string(rr, rr_ptr - rr);
+			m->rra_count = htons(1);
+			break;
 
-		if (m.mtype == QDNS_MATCH_EXACT)
-			exact_matches[make_pair(m.name, m.type)] = m;
-		else
-			wild_matches[make_pair(m.name, m.type)] = m;
+		default:
+			if (link_rr.size() == 0)
+				delete m;
+			continue;
+		}
+
+		// Only add new match if not linked to existing one
+		if (link_rr.size() == 0) {
+			if (m->mtype == QDNS_MATCH_EXACT)
+				exact_matches[make_pair(m->name, m->type)] = m;
+			else
+				wild_matches[make_pair(m->name, m->type)] = m;
+		}
 
 		++records;
 	}

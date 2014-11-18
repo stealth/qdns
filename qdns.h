@@ -64,7 +64,7 @@ class qdns {
 	dns_provider *io;
 
 	// (qname, qtype) -> match
-	std::map<std::pair<std::string, uint16_t>, match> exact_matches, wild_matches;
+	std::map<std::pair<std::string, uint16_t>, match *> exact_matches, wild_matches;
 	std::map<std::string, int> once;
 
 	std::string src;
