@@ -44,6 +44,11 @@ kernel.org	7350	IN	CNAME	grsecurity.net		; nobody would ask for a CNAME, so an A
 @kernel.org	A
 grsecurity.net	7350	IN	A	173.10.160.233
 
+
+_ldap._tcp.foo	1234	IN	SRV	ldap:389
+@_ldap._tcp.foo	SRV
+ldap		1234	IN	A	1.2.3.4
+
 ; TTL 1 is special and means only one reply per seen client source
 ; in order to demonstrate quantum-insert capability via DNS run
 ; acid.pl on 192.168.0.253:80

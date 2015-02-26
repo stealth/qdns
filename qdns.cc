@@ -173,6 +173,9 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	case dns_type::PTR:
 		log = "PTR? ";
 		break;
+	case dns_type::SRV:
+		log = "SRV? ";
+		break;
 	default:
 		char s[32];
 		snprintf(s, sizeof(s), "%d? ", ntohs(qtype));
@@ -273,6 +276,7 @@ int qdns::parse_zone(const string &file)
 	uint32_t ttl = 0, records = 0;
 	uint32_t soa_ints[5] = {0x11223344, htonl(7200), htonl(7200), htonl(3600000), htonl(7200)};
 	string dname = "", link_rr = "", dlname = "";
+	net_headers::dns_srv_rr srv;
 	map<string, string> A, AAAA;
 	enum {
 		RR_KIND_MATCHING	= 0,
@@ -348,6 +352,8 @@ int qdns::parse_zone(const string &file)
 			dtype = htons(dns_type::CNAME);
 		} else if (strcasecmp(type, "SOA") == 0) {
 			dtype = htons(dns_type::SOA);
+		} else if (strcasecmp(type, "SRV") == 0) {
+			dtype = htons(dns_type::SRV);
 		} else
 			continue;
 
@@ -373,6 +379,8 @@ int qdns::parse_zone(const string &file)
 				dltype = htons(dns_type::CNAME);
 			} else if (strcasecmp(ltype, "SOA") == 0) {
 				dltype = htons(dns_type::SOA);
+			} else if (strcasecmp(ltype, "SRV") == 0) {
+				dltype = htons(dns_type::SRV);
 			} else
 				continue;
 
@@ -462,7 +470,7 @@ int qdns::parse_zone(const string &file)
 		case dns_type::MX:
 			if (host2qname(field, dname) <= 0)
 				continue;
-			if (dname.size() > 256)
+			if (dname.size() > 255)
 				continue;
 			rlen = htons(dname.size() + sizeof(uint16_t));
 			memcpy(rr_ptr, &dtype, sizeof(dtype));
@@ -509,7 +517,7 @@ int qdns::parse_zone(const string &file)
 		case dns_type::NS:
 			if (host2qname(field, dname) <= 0)
 				continue;
-			if (dname.size() > 256)
+			if (dname.size() > 255)
 				continue;
 			rlen = htons(dname.size());
 			memcpy(rr_ptr, &dtype, sizeof(dtype));
@@ -533,7 +541,7 @@ int qdns::parse_zone(const string &file)
 			m->type = dtype;
 			if (host2qname(field, dname) <= 0)
 				continue;
-			if (dname.size() > 256)
+			if (dname.size() > 255)
 				continue;
 			rlen = htons(dname.size());
 			memcpy(rr_ptr, &dtype, sizeof(dtype));
@@ -559,7 +567,7 @@ int qdns::parse_zone(const string &file)
 			m->type = dtype;
 			if (host2qname(field, dname) <= 0)
 				continue;
-			if (dname.size() > 256)
+			if (dname.size() > 255)
 				continue;
 			rlen = htons(2*dname.size() + sizeof(soa_ints));
 			memcpy(rr_ptr, &dtype, sizeof(dtype));
@@ -579,7 +587,28 @@ int qdns::parse_zone(const string &file)
 			m->rr += string(rr, rr_ptr - rr);
 			m->rra_count = htons(1);
 			break;
-
+		case dns_type::SRV:
+			m->type = dtype;
+			if (sscanf(field, "%255[^:]:%hu", name, &srv.port) != 2)
+				continue;
+			if (host2qname(name, dname) <= 0)
+				continue;
+			if (dname.size() > 255)
+				continue;
+			srv.len = htons(dname.size() + 6);
+			srv.type = dtype;
+			srv._class = dclass;
+			srv.ttl = ttl;
+			srv.prio = htons(0);
+			srv.weight = htons(0xffff);
+			srv.port = htons(srv.port);
+			memcpy(rr_ptr, &srv, sizeof(srv));
+			rr_ptr += sizeof(srv);
+			memcpy(rr_ptr, dname.c_str(), dname.size());
+			rr_ptr += dname.size();
+			m->rr = string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
 		default:
 			if (link_rr.size() == 0)
 				delete m;

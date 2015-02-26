@@ -323,6 +323,15 @@ struct dns_rr {
 } __attribute__((packed));
 
 
+struct dns_srv_rr {
+	// name here
+	uint16_t type, _class;
+	uint32_t ttl;
+	uint16_t len;
+	uint16_t prio, weight, port;
+	// octet target here
+} __attribute__((packed));
+
 
 } // namespace
 
