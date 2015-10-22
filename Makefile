@@ -1,7 +1,7 @@
 CXX=c++
-CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c
+CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c -I/usr/local/include
 LD=c++
-LDFLAGS=-lusi++ -lpcap -ldnet
+LDFLAGS=-lusi++ -lpcap -ldnet -L/usr/local/lib
 
 all: provider.o qdns.o main.o misc.o
 	$(LD) *.o -o qdns $(LDFLAGS)

@@ -17,8 +17,8 @@
  * along with quantum-dns. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef __qdns_h__
-#define __qdns_h__
+#ifndef qdns_qdns_h
+#define qdns_qdns_h
 
 #include <map>
 #include <string>
