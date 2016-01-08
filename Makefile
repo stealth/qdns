@@ -4,7 +4,7 @@ LD=c++
 LDFLAGS=-lusi++ -lpcap -ldnet -L/usr/local/lib
 
 all: provider.o qdns.o main.o misc.o
-	$(LD) *.o -o qdns $(LDFLAGS)
+	$(LD) *.o $(LDFLAGS) -o qdns
 
 misc.o: misc.cc misc.h
 	$(CXX) $(CXXFLAGS) misc.cc

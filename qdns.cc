@@ -127,7 +127,7 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	ptr += sizeof(dnshdr);
 
 	// Huh? dst port 53 and no query?
-	if (hdr.qr != 0)
+	if (hdr.qr != 0 || hdr.opcode != 0)
 		return -1;
 
 	// only one question
@@ -225,6 +225,11 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 		}
 	} else
 		m = it1->second;
+
+	if (!m) {
+		log += "NULL match. Missing -X?";
+		return -1;
+	}
 
 	// TTL of 1 means, only handle this client src once
 	if (m->ttl == htonl(1)) {
