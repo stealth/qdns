@@ -161,7 +161,7 @@ int usipp_provider::init(const map<string, string> &args)
 		mon6 = new (nothrow) UDP6("::");
 		family = AF_INET6;
 
-		if (mon6->init_device(dev, 1, 1500) < 0)
+		if (mon6->init_device(dev, 1, usipp::min_packet_size) < 0)
 			return build_error("init: " + string(mon6->why()));
 		if (mon6->setfilter(f) < 0)
 			return build_error("init: " + string(mon6->why()));
@@ -169,7 +169,7 @@ int usipp_provider::init(const map<string, string> &args)
 	} else {
 		mon4 = new (nothrow) UDP4("0.0.0.0");
 		family = AF_INET;
-		if (mon4->init_device(dev, 1, 1500) < 0)
+		if (mon4->init_device(dev, 1, usipp::min_packet_size) < 0)
 			return build_error("init: " + string(mon4->why()));
 		if (mon4->setfilter(f) < 0)
 			return build_error("init: " + string(mon4->why()));
