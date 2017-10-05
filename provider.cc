@@ -216,8 +216,6 @@ int usipp_provider::reply(const string &pkt)
 		mon4->set_options("");
 		mon4->set_totlen(0);	// IPv4 len
 		mon4->set_len(0);	// UDP len
-		mon4->set_udpsum(0);
-		mon4->set_sum(0);
 		if (mon4->sendpack(pkt) < 0)
 			return build_error("reply: " + string(mon4->why()));
 	} else if (mon6) {
@@ -230,7 +228,6 @@ int usipp_provider::reply(const string &pkt)
 		mon6->clear_headers();
 		mon6->set_payloadlen(0);
 		mon6->set_len(0);
-		mon6->set_udpsum(0);
 		if (mon6->sendpack(pkt) < 0)
 			return build_error("reply: " + string(mon6->why()));
 	}
