@@ -45,6 +45,11 @@ kernel.org	7350	IN	CNAME	grsecurity.net		; nobody would ask for a CNAME, so an A
 grsecurity.net	7350	IN	A	173.10.160.233
 
 
+; demonstrate DNS rebind attack or load-balancing; for rebind the TTL should be shorter though
+kernel.org	7350	IN	A	127.0.0.1
+@kernel.org     A
+yolo		1234	IN	CNAME	yala
+
 _ldap._tcp.foo	1234	IN	SRV	ldap:389
 @_ldap._tcp.foo	SRV
 ldap		1234	IN	A	1.2.3.4
@@ -56,6 +61,7 @@ ldap		1234	IN	A	1.2.3.4
 ; will reach its legit destination
 
 *google.com	1	IN	a	192.168.0.253		; a wildcard match for this domain
+
 
 
 ; [forward] is a special name that pops in when nothing else matches

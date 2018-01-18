@@ -1,7 +1,7 @@
 /*
  * This file is part of quantum-dns.
  *
- * (C) 2014 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2014-2018 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
  *
  * quantum-dns is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
  */
 
 #include <map>
+#include <list>
 #include <string>
 #include <cstdlib>
 #include <cstring>
@@ -176,6 +177,9 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	case dns_type::SRV:
 		log = "SRV? ";
 		break;
+	case dns_type::TXT:
+		log = "TXT? ";
+		break;
 	default:
 		char s[32];
 		snprintf(s, sizeof(s), "%d? ", ntohs(qtype));
@@ -186,18 +190,18 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	log += " -> ";
 
 	bool found_domain = 1;
-	match *m = NULL;
-	auto it1 = exact_matches.find(make_pair(qname, qtype));
-	if (it1 == exact_matches.end()) {
+	auto it1 = exact_matches.find(make_pair(qname, qtype)), lit = it1;
+
+	if (lit == exact_matches.end()) {
 		string::size_type pos = string::npos, minpos = string::npos;
 
 		// try to find largest substring match
-		for (auto it2 : wild_matches) {
-			if ((pos = qname.find(it2.first.first)) == string::npos || it2.first.second != qtype)
+		for (auto it2 = wild_matches.begin(); it2 != wild_matches.end(); ++it2) {
+			if ((pos = qname.find(it2->first.first)) == string::npos || it2->first.second != qtype)
 				continue;
-			if (pos < minpos && pos + it2.first.first.size() == qname.size()) {
+			if (pos < minpos && pos + it2->first.first.size() == qname.size()) {
 				minpos = pos;
-				m = it2.second;
+				lit = it2;
 			}
 		}
 
@@ -207,7 +211,7 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 			log += "NDXOMAIN ";
 			auto it3 = exact_matches.find(make_pair(string("\x9[forward]\0", 11), htons(dns_type::SOA)));
 			if (it3 != exact_matches.end())
-				m = it3->second;
+				lit = it3;
 
 			// if -R was given, we are firewalling router,
 			// so resend in case we cant resolve ourself
@@ -223,16 +227,26 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 				return -1;
 			}
 		}
-	} else
-		m = it1->second;
+	}
 
-	if (!m) {
+	// still nothing found?
+	if (lit == exact_matches.end()) {
+		log += "no [forward], (nosend)";
+		return -1;
+	}
+
+	// map wasnt changed, so lit iterator still valid
+	list<match *> &l = lit->second;
+
+	if (l.size() == 0) {
 		log += "NULL match. Missing -X?";
 		return -1;
 	}
 
+	match *m = l.front();
+
 	// TTL of 1 means, only handle this client src once
-	if (m->ttl == htonl(1)) {
+	if (l.size() == 1 && m->ttl == htonl(1)) {
 		if (once.count(src) > 0) {
 			log += "(once, nosend)";
 			return -1;
@@ -263,6 +277,13 @@ int qdns::parse_packet(const string &query, string &response, string &log)
 	response += question;
 	response += m->rr;
 
+	// shift list of matches. l is a ref to the list inside
+	// the map, so the change really happens
+	if (l.size() > 1) {
+		l.push_back(m);
+		l.pop_front();
+	}
+
 	return 1;
 }
 
@@ -277,7 +298,7 @@ int qdns::parse_zone(const string &file)
 		return build_error("parse_zone: fopen");
 
 	char buf[1024], *ptr = NULL, name[256], type[256], ltype[256], ttlb[255], field[256], rr[1024], *rr_ptr = NULL;
-	uint16_t off = 0, rlen = 0, zero = 0, dtype = 0, dltype = 0, dclass = htons(1);
+	uint16_t off = 0, rlen = 0, zero = 0, dtype = 0, dltype = 0, dclass = htons(1), prio = 0, weight = 0;
 	uint32_t ttl = 0, records = 0;
 	uint32_t soa_ints[5] = {0x11223344, htonl(7200), htonl(7200), htonl(3600000), htonl(7200)};
 	string dname = "", link_rr = "", dlname = "";
@@ -359,12 +380,16 @@ int qdns::parse_zone(const string &file)
 			dtype = htons(dns_type::SOA);
 		} else if (strcasecmp(type, "SRV") == 0) {
 			dtype = htons(dns_type::SRV);
+		} else if (strcasecmp(type, "TXT") == 0) {
+			dtype = htons(dns_type::TXT);
+		} else if (strcasecmp(type, "PTR") == 0) {
+			dtype = htons(dns_type::PTR);
 		} else
 			continue;
 
 		ttl = htonl(strtoul(ttlb, NULL, 10));
 
-		match *m = NULL;
+		match *m = nullptr;
 
 		// use already existing match if linked to existing RR
 		if (link_rr.size() > 0) {
@@ -386,13 +411,17 @@ int qdns::parse_zone(const string &file)
 				dltype = htons(dns_type::SOA);
 			} else if (strcasecmp(ltype, "SRV") == 0) {
 				dltype = htons(dns_type::SRV);
+			} else if (strcasecmp(ltype, "TXT") == 0) {
+				dltype = htons(dns_type::TXT);
+			} else if (strcasecmp(ltype, "PTR") == 0) {
+				dltype = htons(dns_type::PTR);
 			} else
 				continue;
 
 			if (exact_matches.count(make_pair(dlname, dltype)) > 0)
-				m = exact_matches.find(make_pair(dlname, dltype))->second;
+				m = exact_matches.find(make_pair(dlname, dltype))->second.back();
 			else if (wild_matches.count(make_pair(dlname, dltype)) > 0)
-				m = wild_matches.find(make_pair(dlname, dltype))->second;
+				m = wild_matches.find(make_pair(dlname, dltype))->second.back();
 			else
 				continue;
 
@@ -594,7 +623,7 @@ int qdns::parse_zone(const string &file)
 			break;
 		case dns_type::SRV:
 			m->type = dtype;
-			if (sscanf(field, "%255[^:]:%hu", name, &srv.port) != 2)
+			if (sscanf(field, "%255[^:]:%hu:%hu:%hu", name, &prio, &weight, &srv.port) != 4)
 				continue;
 			if (host2qname(name, dname) <= 0)
 				continue;
@@ -604,14 +633,37 @@ int qdns::parse_zone(const string &file)
 			srv.type = dtype;
 			srv._class = dclass;
 			srv.ttl = ttl;
-			srv.prio = htons(0);
-			srv.weight = htons(0xffff);
+			srv.prio = htons(prio);
+			srv.weight = htons(weight);
 			srv.port = htons(srv.port);
 			memcpy(rr_ptr, &srv, sizeof(srv));
 			rr_ptr += sizeof(srv);
 			memcpy(rr_ptr, dname.c_str(), dname.size());
 			rr_ptr += dname.size();
-			m->rr = string(rr, rr_ptr - rr);
+			m->rr += string(rr, rr_ptr - rr);
+			m->a_count += htons(1);
+			break;
+		case dns_type::TXT:
+		case dns_type::PTR:
+			m->type = dtype;
+			if (sscanf(field, "%255[^\n]", name) != 1)
+				continue;
+			if (host2qname(name, dname) <= 0)
+				continue;
+			if (dname.size() > 255)
+				continue;
+			rlen = htons(dname.size());
+			memcpy(rr_ptr, &dtype, sizeof(dtype));
+			rr_ptr += sizeof(dtype);
+			memcpy(rr_ptr, &dclass, sizeof(dclass));
+			rr_ptr += sizeof(dclass);
+			memcpy(rr_ptr, &ttl, sizeof(ttl));
+			rr_ptr += sizeof(ttl);
+			memcpy(rr_ptr, &rlen, sizeof(rlen));
+			rr_ptr += sizeof(rlen);
+			memcpy(rr_ptr, dname.c_str(), dname.size());
+			rr_ptr += dname.size();
+			m->rr += string(rr, rr_ptr - rr);
 			m->a_count += htons(1);
 			break;
 		default:
@@ -623,9 +675,9 @@ int qdns::parse_zone(const string &file)
 		// Only add new match if not linked to existing one
 		if (link_rr.size() == 0) {
 			if (m->mtype == QDNS_MATCH_EXACT)
-				exact_matches[make_pair(m->name, m->type)] = m;
+				exact_matches[make_pair(m->name, m->type)].push_back(m);
 			else
-				wild_matches[make_pair(m->name, m->type)] = m;
+				wild_matches[make_pair(m->name, m->type)].push_back(m);
 		}
 
 		++records;

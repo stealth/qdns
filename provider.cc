@@ -1,7 +1,7 @@
 /*
  * This file is part of quantum-dns.
  *
- * (C) 2014 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2014-2018 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
  *
  * quantum-dns is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -155,12 +155,11 @@ int usipp_provider::init(const map<string, string> &args)
 		f = "ip6 and udp and dst port 53 ";
 
 	if ((it = args.find("filter")) != args.end())
-		f += it->second;
+		f = it->second;
 
 	if (args.count("6") > 0) {
 		mon6 = new (nothrow) UDP6("::");
 		family = AF_INET6;
-
 		if (mon6->init_device(dev, 1, usipp::min_packet_size) < 0)
 			return build_error("init: " + string(mon6->why()));
 		if (mon6->setfilter(f) < 0)
@@ -209,25 +208,31 @@ int usipp_provider::reply(const string &pkt)
 	if (mon4) {
 		uint32_t s = mon4->get_src();
 		uint32_t d = mon4->get_dst();
+		uint16_t dport = mon4->get_dstport();
+
 		mon4->set_src(d);
 		mon4->set_dst(s);
 		mon4->set_dstport(mon4->get_srcport());
-		mon4->set_srcport(53);
+		mon4->set_srcport(dport);
 		mon4->set_options("");
 		mon4->set_totlen(0);	// IPv4 len
 		mon4->set_len(0);	// UDP len
+		mon4->set_ttl(64);
 		if (mon4->sendpack(pkt) < 0)
 			return build_error("reply: " + string(mon4->why()));
 	} else if (mon6) {
 		usipp::in6_addr s = mon6->get_src();
 		usipp::in6_addr d = mon6->get_dst();
+		uint16_t dport = mon6->get_dstport();
+
 		mon6->set_src(d);
 		mon6->set_dst(s);
 		mon6->set_dstport(mon6->get_srcport());
-		mon6->set_srcport(53);
+		mon6->set_srcport(dport);
 		mon6->clear_headers();
 		mon6->set_payloadlen(0);
 		mon6->set_len(0);
+		mon6->set_hoplimit(64);
 		if (mon6->sendpack(pkt) < 0)
 			return build_error("reply: " + string(mon6->why()));
 	}

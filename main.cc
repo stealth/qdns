@@ -1,7 +1,7 @@
 /*
  * This file is part of quantum-dns.
  *
- * (C) 2014 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2014-2018 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
  *
  * quantum-dns is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@ int main(int argc, char **argv)
 	map<string, string> args;
 	bool laddr_set = 0;
 
-	cout<<"\nQUANTUM-DNS server (C) 2014 Sebastian Krahmer -- https://github.com/stealth/qdns\n\n";
+	cout<<"\nQUANTUM-DNS server (C) 2014-2018 Sebastian Krahmer -- https://github.com/stealth/qdns\n\n";
 
 	args["laddr"] = "0.0.0.0";
 	args["nxdomain"] = "1";

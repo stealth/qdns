@@ -1,7 +1,7 @@
 /*
  * This file is part of quantum-dns.
  *
- * (C) 2014 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
+ * (C) 2014-2018 by Sebastian Krahmer, sebastian [dot] krahmer [at] gmail [dot] com
  *
  * quantum-dns is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
