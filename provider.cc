@@ -55,7 +55,7 @@ int socket_provider::init(const map<string, string> &args)
 	if ((sock = socket(ai->ai_family, SOCK_DGRAM, 0)) < 0)
 		return build_error("init: socket");
 
-	if (bind(sock, ai->ai_addr, ai->ai_addrlen) < 0)
+	if (::bind(sock, ai->ai_addr, ai->ai_addrlen) < 0)
 		return build_error("init: bind");
 
 	family = ai->ai_family;
