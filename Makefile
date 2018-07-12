@@ -1,7 +1,13 @@
+
 CXX=c++
 CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c -I/usr/local/include
 LD=c++
-LDFLAGS=-lusi++ -lpcap -ldnet -L/usr/local/lib
+LIBS=-lusi++ -lpcap
+
+# on some systems where libdumbnet isnt installed, this isnt needed
+LIBS+=-ldnet
+
+LDFLAGS=$(LIBS) -L/usr/local/lib
 
 all: provider.o qdns.o main.o misc.o
 	$(LD) *.o $(LDFLAGS) -o qdns

@@ -25,9 +25,22 @@
 #define qdns_net_headers_h
 
 #include <sys/types.h>
+#ifdef __linux__
 #include <bits/endian.h>
+#endif
 #include <stdint.h>
 
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER BYTE_ORDER
+#endif
+
+#ifndef __BIG_ENDIAN
+#define __BING_ENDIAN BIG_ENDIAN
+#endif
+
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN LITTLE_ENDIAN
+#endif
 
 namespace net_headers {
 
