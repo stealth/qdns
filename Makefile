@@ -1,6 +1,13 @@
 
+
 CXX=c++
-CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c -I/usr/local/include
+
+# define this, if you also want to use layer2 sockets to be used
+# on IPv6 on Linux, which isn't necessary there, as Linux may pass
+# IPv6 headers on raw sockets, unlike on BSD etc.
+#DEFS=-DUSE_L2TX
+
+CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c -I/usr/local/include $(DEFS)
 LD=c++
 LIBS=-lusi++ -lpcap
 

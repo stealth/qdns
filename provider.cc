@@ -165,6 +165,21 @@ int usipp_provider::init(const map<string, string> &args)
 		if (mon6->setfilter(f) < 0)
 			return build_error("init: " + string(mon6->why()));
 
+#if !defined __linux__ || defined USE_L2TX
+
+		// Only Linux may pass IPv6 headers to raw sockets. In order to
+		// allow IPv6 spoofing, we need to use link layer on *BSD and OSX
+		usipp::pcap *rx = reinterpret_cast<usipp::pcap *>(mon6->raw_rx());
+		if (rx) {
+			auto tx = new (nothrow) TX_pcap_eth(rx);
+			if (tx) {
+				tx->set_type(usipp::numbers::eth_p_ipv6);
+				mon6->register_tx(tx);
+			}
+			// do not delete tx, usipp will do on mon6 destruct
+		}
+#endif
+
 	} else {
 		mon4 = new (nothrow) UDP4("0.0.0.0");
 		family = AF_INET;
@@ -229,6 +244,15 @@ int usipp_provider::reply(const string &pkt)
 		mon6->set_dst(s);
 		mon6->set_dstport(mon6->get_srcport());
 		mon6->set_srcport(dport);
+
+#if !defined __linux__ || USE_L2TX
+		// since we use L2 TX, also swap layer2 addresses
+		string l2src = "", l2dst = "";
+		mon6->raw_rx()->get_l2src(l2src);
+		mon6->raw_rx()->get_l2dst(l2dst);
+		mon6->raw_tx()->set_l2src(l2dst);
+		mon6->raw_tx()->set_l2dst(l2src);
+#endif
 		mon6->clear_headers();
 		mon6->set_payloadlen(0);
 		mon6->set_len(0);
