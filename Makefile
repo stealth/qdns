@@ -11,10 +11,13 @@ CXXFLAGS=-Wall -std=c++11 -pedantic -O2 -c -I/usr/local/include $(DEFS)
 LD=c++
 LIBS=-lusi++ -lpcap
 
-# on some systems where libdumbnet isnt installed, this isnt needed
+# on some systems where libdumbnet isn't installed, this isnt needed (NetBSD)
 LIBS+=-ldnet
 
 LDFLAGS=$(LIBS) -L/usr/local/lib
+
+#required on BSD
+#LDFLAGS+=-Wl,-rpath=/usr/local/lib
 
 all: provider.o qdns.o main.o misc.o
 	$(LD) *.o $(LDFLAGS) -o qdns
