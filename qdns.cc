@@ -472,6 +472,7 @@ int qdns::parse_zone(const string &file)
 			m->rra_count = 0;
 		}
 
+		uint16_t prt = 0;
 
 		switch (ntohs(dtype)) {
 		case dns_type::A:
@@ -623,8 +624,12 @@ int qdns::parse_zone(const string &file)
 			break;
 		case dns_type::SRV:
 			m->type = dtype;
-			if (sscanf(field, "%255[^:]:%hu:%hu:%hu", name, &prio, &weight, &srv.port) != 4)
+
+			// avoid warning about unaligned &src.port access
+			if (sscanf(field, "%255[^:]:%hu:%hu:%hu", name, &prio, &weight, &prt) != 4)
 				continue;
+			srv.port = prt;
+
 			if (host2qname(name, dname) <= 0)
 				continue;
 			if (dname.size() > 255)
